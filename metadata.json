@@ -1,0 +1,5 @@
+{
+  "name": "News to Story Converter",
+  "description": "Extracts news articles from URLs and converts them into a 9:16 visual story format with AI-generated summaries and images.",
+  "requestFramePermissions": []
+}
