@@ -1,10 +1,10 @@
-
 import React, { useState } from 'react';
 import { UrlInput } from './components/UrlInput';
 import { StoryCard } from './components/StoryCard';
 import { generateStoryFromUrl } from './services/geminiService';
 import { StoryData, ProcessingState } from './types';
 import { NEWS_INTRO_AUDIO_URL } from './constants';
+import html2canvas from 'html2canvas';
 
 export default function App() {
   const [storyData, setStoryData] = useState<StoryData | null>(null);
@@ -13,8 +13,6 @@ export default function App() {
     step: 'idle',
   });
   const [isProcessingVideo, setIsProcessingVideo] = useState(false);
-  const [includeBacksound, setIncludeBacksound] = useState(false);
-  const [customAudioFile, setCustomAudioFile] = useState<File | null>(null);
 
   const handleUrlSubmit = async (url: string) => {
     setStatus({ isLoading: true, step: 'analyzing' });
@@ -42,14 +40,6 @@ export default function App() {
     }
   };
 
-  const handleAudioUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (file) {
-          setCustomAudioFile(file);
-          setIncludeBacksound(true); // Auto enable backsound when file is uploaded
-      }
-  };
-
   const handleImageUrlUpdate = (url: string) => {
     if (storyData) {
       setStoryData({ ...storyData, image_url: url });
@@ -74,15 +64,8 @@ export default function App() {
     const element = document.getElementById('story-card-node');
     if (!element) return;
 
-    // @ts-ignore
-    if (!window.html2canvas) {
-      alert("Fitur download sedang dimuat. Silakan coba beberapa saat lagi.");
-      return;
-    }
-
     try {
-      // @ts-ignore
-      const canvas = await window.html2canvas(element, {
+      const canvas = await html2canvas(element, {
         useCORS: true,
         scale: 2, // 2x scale for better resolution
         backgroundColor: null,
@@ -103,28 +86,20 @@ export default function App() {
     const element = document.getElementById('story-card-node');
     if (!element) return;
     
-    // @ts-ignore
-    if (!window.html2canvas) {
-        alert("Library belum siap.");
-        return;
-    }
-
     setIsProcessingVideo(true);
 
     try {
-        // 1. Setup Audio Context immediately to unlock browser autoplay policy
-        let audioCtx: AudioContext | null = null;
-        if (includeBacksound) {
-             audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-             // Important: Resume context immediately
-             if (audioCtx.state === 'suspended') {
-                 await audioCtx.resume();
-             }
+        // 1. Always Setup Audio Context
+        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+        const audioCtx = new AudioContextClass();
+        
+        // Resume explicitly for browsers that suspend audio contexts created without direct user gesture initially
+        if (audioCtx.state === 'suspended') {
+             await audioCtx.resume();
         }
 
         // 2. Convert DOM to Canvas first (high quality)
-        // @ts-ignore
-        const sourceCanvas = await window.html2canvas(element, {
+        const sourceCanvas = await html2canvas(element, {
             useCORS: true,
             scale: 2,
             backgroundColor: null,
@@ -142,46 +117,39 @@ export default function App() {
         const canvasStream = recordCanvas.captureStream(30); // 30 FPS
         let finalStream = canvasStream;
 
-        // 5. Process Audio (If enabled)
-        if (includeBacksound && audioCtx) {
-            try {
-                const dest = audioCtx.createMediaStreamDestination();
-                
-                let arrayBuffer: ArrayBuffer;
+        // 5. Fetch and Mix Audio
+        try {
+            const dest = audioCtx.createMediaStreamDestination();
+            
+            // Fetch default audio file
+            // Use 'cors' mode to ensure we can read the data
+            const response = await fetch(NEWS_INTRO_AUDIO_URL, { mode: 'cors' });
+            if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+            
+            const arrayBuffer = await response.arrayBuffer();
+            const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+            
+            // Create source
+            const source = audioCtx.createBufferSource();
+            source.buffer = audioBuffer;
+            source.loop = true; // Loop if audio is shorter than video
+            
+            // Create Gain Node to control volume (optional, prevents clipping)
+            const gainNode = audioCtx.createGain();
+            gainNode.gain.value = 0.8; 
 
-                if (customAudioFile) {
-                    // Use uploaded file
-                    arrayBuffer = await customAudioFile.arrayBuffer();
-                } else {
-                    // Fetch default audio file
-                    const response = await fetch(NEWS_INTRO_AUDIO_URL);
-                    arrayBuffer = await response.arrayBuffer();
-                }
+            source.connect(gainNode);
+            gainNode.connect(dest);
+            source.start(0);
 
-                const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
-                
-                // Create source
-                const source = audioCtx.createBufferSource();
-                source.buffer = audioBuffer;
-                source.loop = true; // Loop if audio is shorter than video
-                
-                // Create Gain Node to control volume (optional, prevents clipping)
-                const gainNode = audioCtx.createGain();
-                gainNode.gain.value = 0.8; 
+            // Mix tracks: Canvas Video + Audio
+            const audioTrack = dest.stream.getAudioTracks()[0];
+            const videoTrack = canvasStream.getVideoTracks()[0];
+            finalStream = new MediaStream([videoTrack, audioTrack]);
 
-                source.connect(gainNode);
-                gainNode.connect(dest);
-                source.start(0);
-
-                // Mix tracks: Canvas Video + Audio
-                const audioTrack = dest.stream.getAudioTracks()[0];
-                const videoTrack = canvasStream.getVideoTracks()[0];
-                finalStream = new MediaStream([videoTrack, audioTrack]);
-
-            } catch (audioErr) {
-                console.warn("Gagal memuat audio:", audioErr);
-                alert("Gagal memuat audio. Video akan hening.");
-            }
+        } catch (audioErr) {
+            console.warn("Gagal memuat audio:", audioErr);
+            alert("Gagal memuat backsound. Video akan hening. (Cek koneksi atau CORS)");
         }
 
         // 6. Setup MediaRecorder with specific mimeType for better compatibility
@@ -379,76 +347,39 @@ export default function App() {
                  Buat Baru
                </button>
                
-               <div className="flex flex-col gap-2">
-                 <div className="flex items-center gap-2 px-1">
-                    <input 
-                      type="checkbox" 
-                      id="backsound" 
-                      checked={includeBacksound} 
-                      onChange={(e) => setIncludeBacksound(e.target.checked)}
-                      className="w-4 h-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500 cursor-pointer"
-                    />
-                    <label htmlFor="backsound" className="text-sm text-gray-600 cursor-pointer select-none">
-                        Pakai Backsound {customAudioFile ? '(File Sendiri)' : '(Default)'}
-                    </label>
-                 </div>
+               <div className="flex gap-3 mt-2">
+                  <button 
+                      className="flex-1 px-4 py-3 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 shadow-sm font-medium transition-colors flex items-center justify-center gap-2"
+                      onClick={handleDownload}
+                  >
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                      </svg>
+                      Simpan Gambar
+                  </button>
 
-                 {/* Custom Audio Upload */}
-                 <div className="ml-6">
-                    <label className="block text-[10px] text-gray-400 mb-1">Ganti backsound dengan file lokal (mp3/wav/ogg):</label>
-                    <input 
-                      type="file" 
-                      accept="audio/*"
-                      onChange={handleAudioUpload}
-                      className="block w-full text-xs text-gray-500 file:mr-2 file:py-1 file:px-2 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer"
-                    />
-                    {customAudioFile && (
-                        <div className="flex items-center gap-2 mt-1">
-                            <span className="text-[10px] text-green-600 truncate max-w-[200px]">{customAudioFile.name}</span>
-                            <button 
-                                onClick={() => { setCustomAudioFile(null); }}
-                                className="text-[10px] text-red-500 hover:text-red-700"
-                            >
-                                Hapus
-                            </button>
-                        </div>
-                    )}
-                 </div>
-
-                 <div className="flex gap-3 mt-2">
-                    <button 
-                        className="flex-1 px-4 py-3 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 shadow-sm font-medium transition-colors flex items-center justify-center gap-2"
-                        onClick={handleDownload}
-                    >
-                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                        </svg>
-                        Simpan Gambar
-                    </button>
-
-                    <button 
-                        disabled={isProcessingVideo}
-                        className="flex-1 px-4 py-3 text-sm bg-indigo-600 text-white rounded-md hover:bg-indigo-700 shadow-sm font-medium transition-colors flex items-center justify-center gap-2 disabled:bg-indigo-400 disabled:cursor-wait"
-                        onClick={handleVideoDownload}
-                    >
-                        {isProcessingVideo ? (
-                        <>
-                            <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                            </svg>
-                            Merekam (10d)...
-                        </>
-                        ) : (
-                        <>
-                            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                            </svg>
-                            Video (10d)
-                        </>
-                        )}
-                    </button>
-                 </div>
+                  <button 
+                      disabled={isProcessingVideo}
+                      className="flex-1 px-4 py-3 text-sm bg-indigo-600 text-white rounded-md hover:bg-indigo-700 shadow-sm font-medium transition-colors flex items-center justify-center gap-2 disabled:bg-indigo-400 disabled:cursor-wait"
+                      onClick={handleVideoDownload}
+                  >
+                      {isProcessingVideo ? (
+                      <>
+                          <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          </svg>
+                          Merekam (10d)...
+                      </>
+                      ) : (
+                      <>
+                          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                          </svg>
+                          Video (10d)
+                      </>
+                      )}
+                  </button>
                </div>
             </div>
           </div>
