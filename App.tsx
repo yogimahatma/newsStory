@@ -149,8 +149,9 @@ export default function App() {
             finalStream = new MediaStream([videoTrack, audioTrack]);
 
         } catch (audioErr) {
-            console.warn("Gagal memuat audio:", audioErr);
-            alert("Gagal memuat backsound. Video akan hening. (Cek koneksi atau CORS)");
+            console.warn("Gagal memuat audio, melanjutkan dengan video hening:", audioErr);
+            // Fallback: Do not mix audio, just use video stream.
+            // The process continues without throwing/alerting error.
         }
 
         // 6. Setup MediaRecorder with specific mimeType for better compatibility
