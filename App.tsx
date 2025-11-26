@@ -87,11 +87,12 @@ export default function App() {
     if (!element) return;
     
     setIsProcessingVideo(true);
+    let audioCtx: AudioContext | null = null;
 
     try {
         // 1. Always Setup Audio Context
         const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-        const audioCtx = new AudioContextClass();
+        audioCtx = new AudioContextClass();
         
         // Resume explicitly for browsers that suspend audio contexts created without direct user gesture initially
         if (audioCtx.state === 'suspended') {
@@ -170,6 +171,13 @@ export default function App() {
             if (e.data.size > 0) chunks.push(e.data);
         };
 
+        recorder.onerror = (e) => {
+            console.error("Recorder Error:", e);
+            alert("Terjadi kesalahan saat merekam video.");
+            if (audioCtx) audioCtx.close();
+            setIsProcessingVideo(false);
+        };
+
         recorder.onstop = () => {
             const blob = new Blob(chunks, { type: selectedMimeType || 'video/webm' });
             const url = URL.createObjectURL(blob);
@@ -189,6 +197,8 @@ export default function App() {
         const duration = 10000; // 10 seconds
 
         const drawFrame = () => {
+            if (recorder.state === 'inactive') return; // Stop if recorder stopped elsewhere
+            
             if (Date.now() - startTime > duration) {
                 recorder.stop();
                 return;
@@ -203,6 +213,7 @@ export default function App() {
     } catch (err) {
         console.error("Video creation failed:", err);
         alert("Gagal membuat video. Browser mungkin tidak mendukung fitur ini.");
+        if (audioCtx) audioCtx.close();
         setIsProcessingVideo(false);
     }
   };
