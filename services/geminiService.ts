@@ -2,8 +2,6 @@ import { GoogleGenAI } from "@google/genai";
 import { StoryData } from "../types";
 import { SYSTEM_PROMPT } from "../constants";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-
 /**
  * Extracts JSON from a text that might contain markdown code blocks
  */
@@ -36,6 +34,10 @@ const extractJson = (text: string): any => {
 };
 
 export const generateStoryFromUrl = async (url: string): Promise<StoryData> => {
+  // Initialize AI client lazily inside the function
+  // This prevents the app from crashing at startup if process.env is undefined in the browser
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+
   // 1. Analyze URL and Extract Content
   const analysisResponse = await ai.models.generateContent({
     model: 'gemini-2.5-flash',
